@@ -1,0 +1,125 @@
+# ----------------------------------------
+# Customer Segmentation Analysis Project
+# ----------------------------------------
+
+# 1. Import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+
+# 2. Load dataset
+df = pd.read_csv("/content/ifood_df.csv")
+
+# 3. Data Exploration
+print("First 5 rows:\n", df.head(), "\n")
+print("Dataset Info:\n")
+print(df.info(), "\n")
+print("Summary Statistics:\n", df.describe(), "\n")
+
+# 4. Data Cleaning
+# Check for missing values
+print("Missing Values:\n", df.isnull().sum(), "\n")
+
+# Fill missing income values with median if any
+if df['Income'].isnull().sum() > 0:
+    df['Income'].fillna(df['Income'].median(), inplace=True)
+
+# Drop duplicates
+duplicates = df.duplicated().sum()
+if duplicates > 0:
+    df.drop_duplicates(inplace=True)
+    print(f"Removed {duplicates} duplicate rows.\n")
+
+# 5. Descriptive Statistics
+df['TotalPurchases'] = (
+    df['NumDealsPurchases'] +
+    df['NumWebPurchases'] +
+    df['NumCatalogPurchases'] +
+    df['NumStorePurchases']
+)
+df['AvgPurchaseValue'] = df['MntTotal'] / df['TotalPurchases'].replace(0, np.nan)
+
+print("Average Purchase Value (overall):", round(df['AvgPurchaseValue'].mean(), 2))
+print("Average Purchase Frequency:\n", df[['NumDealsPurchases','NumWebPurchases','NumCatalogPurchases','NumStorePurchases']].mean(), "\n")
+
+# 6. Feature Selection for Segmentation
+features = [
+    'Income', 'Recency',
+    'MntWines', 'MntFruits', 'MntMeatProducts', 'MntFishProducts',
+    'MntSweetProducts', 'MntGoldProds', 'MntTotal', 'MntRegularProds',
+    'NumDealsPurchases', 'NumWebPurchases', 'NumCatalogPurchases',
+    'NumStorePurchases', 'NumWebVisitsMonth'
+]
+X = df[features]
+
+# 7. Feature Scaling
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# 8. Elbow Method to Determine Optimal Clusters
+inertia = []
+K_range = range(2, 11)
+for k in K_range:
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    kmeans.fit(X_scaled)
+    inertia.append(kmeans.inertia_)
+
+plt.figure(figsize=(6,4))
+plt.plot(K_range, inertia, marker='o')
+plt.xlabel('Number of Clusters (k)')
+plt.ylabel('Inertia')
+plt.title('Elbow Method - Optimal k')
+plt.show()
+
+# 9. Apply KMeans Clustering (choose k from elbow plot)
+optimal_k = 4  # adjust after viewing elbow plot
+kmeans = KMeans(n_clusters=optimal_k, random_state=42)
+df['Cluster'] = kmeans.fit_predict(X_scaled)
+
+# 10. Cluster Summary
+cluster_summary = df.groupby('Cluster')[features].mean().round(2)
+print("Cluster Summary:\n", cluster_summary, "\n")
+
+# 11. PCA for 2D Visualization
+pca = PCA(n_components=2)
+pca_components = pca.fit_transform(X_scaled)
+df['PCA1'] = pca_components[:, 0]
+df['PCA2'] = pca_components[:, 1]
+
+plt.figure(figsize=(7,5))
+sns.scatterplot(data=df, x='PCA1', y='PCA2', hue='Cluster', palette='tab10', s=60)
+plt.title('Customer Segmentation (PCA Projection)')
+plt.show()
+
+# 12. Additional Visualization: Spending Patterns per Cluster
+spend_cols = ['MntWines', 'MntFruits', 'MntMeatProducts', 'MntFishProducts', 'MntSweetProducts', 'MntGoldProds']
+cluster_means = df.groupby('Cluster')[spend_cols].mean().reset_index()
+cluster_means_melted = cluster_means.melt(id_vars='Cluster', var_name='Product', value_name='Average Spend')
+
+plt.figure(figsize=(10,6))
+sns.barplot(data=cluster_means_melted, x='Product', y='Average Spend', hue='Cluster')
+plt.title('Average Spending by Product Category per Cluster')
+plt.xticks(rotation=45)
+plt.show()
+
+# 13. Insights & Recommendations
+for cluster in sorted(df['Cluster'].unique()):
+    print(f"\n--- Cluster {cluster} Insights ---")
+    avg_income = cluster_summary.loc[cluster]['Income']
+    avg_total = cluster_summary.loc[cluster]['MntTotal']
+    avg_recency = cluster_summary.loc[cluster]['Recency']
+
+    print(f"Average Income: {avg_income}")
+    print(f"Average Total Spend: {avg_total}")
+    print(f"Average Recency: {avg_recency} days since last purchase")
+
+    if avg_total > df['MntTotal'].mean():
+        print("Recommendation: High spenders – target with premium offers & loyalty perks.")
+    elif avg_income < df['Income'].mean():
+        print("Recommendation: Price-sensitive – focus on discounts/promotions.")
+    else:
+        print("Recommendation: Average customers – engage with loyalty programs and seasonal campaigns.")
